@@ -862,7 +862,7 @@ with col2:
 
 with col3:
     source_label = st.session_state.get("hist_source_name", "本地缓存")
-    st.markdown(f"### 📋 历史数据 <span style='font-size:14px; color:#888; font-weight:normal;'>({source_label})</span>", unsafe_allow_html=True)
+    st.markdown(f"### 📋 历史数据 <span style='font-size:18px; color:#888; font-weight:normal;'>({source_label})</span>", unsafe_allow_html=True)
 #   st.markdown("### 📋 历史数据")
 
     if data:
