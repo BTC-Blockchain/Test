@@ -68,6 +68,40 @@ st.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
+# ====== 原代码中的标题块结束位置 ======
+# st.markdown(f"""
+#     <div style='text-align:center; margin-top: -20px; padding-top: 0px;'>
+#         <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
+#         ...
+# """, unsafe_allow_html=True)
+
+# =========================================================
+# 🔊 声音提醒控制面板 (放置在右上角)
+# =========================================================
+# 使用 8:2 的列比例，把开关组件挤到页面右侧
+col_spacer, col_audio = st.columns([8, 2]) 
+with col_audio:
+    # 1. 初始化 Session State，设置声音提醒默认为 True (开启)
+    if "audio_enabled" not in st.session_state:
+        st.session_state.audio_enabled = True
+    
+    # 2. 使用 Toggle 组件创建开关，绑定状态
+    audio_switch = st.toggle("🔊 声音提醒", value=st.session_state.audio_enabled)
+    
+    # 3. 更新系统状态
+    st.session_state.audio_enabled = audio_switch
+    
+    # 4. 如果用户关闭了提醒，显示红色醒目文字提示
+    if not st.session_state.audio_enabled:
+        st.markdown("""
+            <div style='color: #ff4d6d; font-weight: 900; font-size: 15px; 
+                        background: rgba(255,0,80,0.1); padding: 5px; 
+                        border-radius: 5px; border: 1px solid #ff4d6d; 
+                        text-align: center; margin-top: 5px;'>
+                🚨 警告：声音提醒已关闭！
+            </div>
+        """, unsafe_allow_html=True)
+
 # ======================
 # 🌌 科幻UI样式（优化为浅色）
 # ======================
@@ -596,25 +630,15 @@ except Exception as e:
     is_delayed = False
 
 # ======================
-# 🔊 声音系统（终极修复版）
+# 🔊 声音警报执行逻辑
 # ======================
-if "audio_unlocked" not in st.session_state:
-    st.session_state.audio_unlocked = False
-
-if st.button("🔊 启用声音提醒"):
-    st.session_state.audio_unlocked = True
-    # 更换为极其稳定、无防盗链的 Google 官方测试提示音
-    test_audio_url = "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
-    st.markdown(f'<audio autoplay><source src="{test_audio_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
-    st.success("✅ 声音提醒已解锁！您刚才应该已经听到了一声测试的“滴”声。")
-
-# ✅ 直接利用原本代码中完美的 is_new 变量，最精准！
-if st.session_state.audio_unlocked and is_new:
+# 检查：1. 声音开关是否开启 (默认是开启的) 2. 是否抓取到新数据
+if st.session_state.audio_enabled and is_new:
     # 加上时间戳防止浏览器缓存，确保每次新数据都响
     alert_url = f"https://actions.google.com/sounds/v1/alarms/beep_short.ogg?t={datetime.now(timezone.utc).timestamp()}"
     st.markdown(f'<audio autoplay><source src="{alert_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
     
-    # 加上一个视觉弹窗，做双重保障
+    # 视觉弹窗双重保障 (完全保留原有要求)
     st.toast("🔔 抓取到新 METAR 数据，已触发声音警报！", icon="🔊", duration=10)
 
 # 数据来源
