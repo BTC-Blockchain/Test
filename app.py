@@ -643,7 +643,8 @@ if st.session_state.audio_enabled and is_new:
     st.markdown(f'<audio autoplay><source src="{alert_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
     
     # 视觉弹窗双重保障
-    st.toast("🔔 抓取到新 METAR 数据，已触发声音警报！", icon="🔊", duration=10)
+    st.toast("🔔 抓取到新 METAR 数据！", icon="🔊", duration=12)
+    st.toast("🔊 已触发声音警报!", icon="🔊", duration=8)
     
 # 数据来源
 delay_info = f"**{int(delay_min)}** 分钟" 
