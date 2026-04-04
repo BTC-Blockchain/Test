@@ -51,22 +51,53 @@ st.markdown("""
 
 # 2. 修复并优化后的标题 HTML 模块
 # 增加了 margin-top: -20px 来抵消最后一点无法消除的物理间隙
-st.markdown(f"""
-    <div style='text-align:center; margin-top: -20px; padding-top: 0px;'>
-        <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
-            🚀 METAR 智能监控终端
-        </h1>
-        <p style='margin: 5px 0; color: #00aaff; font-size: 16px; font-weight: bold;'>
-            实时气象 · 概率模型 · 信号系统
-        </p>
-        <p style='margin: 2px 0; font-size: 14px; color: #888; font-weight: bold;'>
-            更新时间：{now_local().strftime('%Y-%m-%d %H:%M:%S')}
-        </p>
-        <p style='margin: 2px 0; font-size: 14px; color: #666; font-weight: bold;'>
-            数据来源：METAR(ZSPD) ｜ 系统每30S自动刷新 ｜ Design by Kylin
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+# =========================================================
+# 2. 修复并优化后的标题 HTML 模块 + 右侧声音开关 (三列布局)
+# =========================================================
+# 使用 [2, 6, 2] 的比例划分列。中间列最宽放标题，两边对称保证标题绝对居中
+col_left, col_title, col_audio = st.columns([2, 6, 2])
+
+with col_title:
+    # 标题部分保持原来的紧凑样式不变
+    st.markdown(f"""
+        <div style='text-align:center; margin-top: -20px; padding-top: 0px;'>
+            <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
+                🚀 METAR 智能监控终端
+            </h1>
+            <p style='margin: 5px 0; color: #00aaff; font-size: 16px; font-weight: bold;'>
+                实时气象 · 概率模型 · 信号系统
+            </p>
+            <p style='margin: 2px 0; font-size: 14px; color: #888; font-weight: bold;'>
+                更新时间：{now_local().strftime('%Y-%m-%d %H:%M:%S')}
+            </p>
+            <p style='margin: 2px 0; font-size: 14px; color: #666; font-weight: bold;'>
+                数据来源：METAR(ZSPD) ｜ 系统每30S自动刷新 ｜ Design by Kylin
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+with col_audio:
+    # 1. 初始化 Session State
+    if "audio_enabled" not in st.session_state:
+        st.session_state.audio_enabled = True
+    
+    # 2. 注入一个空的 div，利用 margin-top 将开关向下推一点，使其与左侧的主标题在视觉上垂直对齐
+    st.markdown("<div style='margin-top: -15px;'></div>", unsafe_allow_html=True)
+    
+    # 3. 渲染开关
+    audio_switch = st.toggle("🔊 声音提醒", value=st.session_state.audio_enabled)
+    st.session_state.audio_enabled = audio_switch
+    
+    # 4. 关闭时的红色警告 (缩小了字体和内边距，以适应较窄的右侧列)
+    if not st.session_state.audio_enabled:
+        st.markdown("""
+            <div style='color: #ff4d6d; font-weight: 900; font-size: 13px; 
+                        background: rgba(255,0,80,0.1); padding: 4px; 
+                        border-radius: 5px; border: 1px solid #ff4d6d; 
+                        text-align: center; margin-top: 0px;'>
+                🚨 警告：声音提醒已关闭！
+            </div>
+        """, unsafe_allow_html=True)
 
 # ====== 原代码中的标题块结束位置 ======
 # st.markdown(f"""
@@ -74,33 +105,6 @@ st.markdown(f"""
 #         <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
 #         ...
 # """, unsafe_allow_html=True)
-
-# =========================================================
-# 🔊 声音提醒控制面板 (放置在右上角)
-# =========================================================
-# 使用 8:2 的列比例，把开关组件挤到页面右侧
-col_spacer, col_audio = st.columns([8, 2]) 
-with col_audio:
-    # 1. 初始化 Session State，设置声音提醒默认为 True (开启)
-    if "audio_enabled" not in st.session_state:
-        st.session_state.audio_enabled = True
-    
-    # 2. 使用 Toggle 组件创建开关，绑定状态
-    audio_switch = st.toggle("🔊 声音提醒", value=st.session_state.audio_enabled)
-    
-    # 3. 更新系统状态
-    st.session_state.audio_enabled = audio_switch
-    
-    # 4. 如果用户关闭了提醒，显示红色醒目文字提示
-    if not st.session_state.audio_enabled:
-        st.markdown("""
-            <div style='color: #ff4d6d; font-weight: 900; font-size: 15px; 
-                        background: rgba(255,0,80,0.1); padding: 5px; 
-                        border-radius: 5px; border: 1px solid #ff4d6d; 
-                        text-align: center; margin-top: 5px;'>
-                🚨 警告：声音提醒已关闭！
-            </div>
-        """, unsafe_allow_html=True)
 
 # ======================
 # 🌌 科幻UI样式（优化为浅色）
@@ -638,9 +642,9 @@ if st.session_state.audio_enabled and is_new:
     alert_url = f"https://actions.google.com/sounds/v1/alarms/beep_short.ogg?t={datetime.now(timezone.utc).timestamp()}"
     st.markdown(f'<audio autoplay><source src="{alert_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
     
-    # 视觉弹窗双重保障 (完全保留原有要求)
+    # 视觉弹窗双重保障
     st.toast("🔔 抓取到新 METAR 数据，已触发声音警报！", icon="🔊", duration=10)
-
+    
 # 数据来源
 delay_info = f"**{int(delay_min)}** 分钟" 
 space = "&nbsp;" * 80
