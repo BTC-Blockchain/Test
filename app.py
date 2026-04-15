@@ -49,24 +49,53 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 2. 修复并优化后的标题 HTML 模块
-# 增加了 margin-top: -20px 来抵消最后一点无法消除的物理间隙
-st.markdown(f"""
-    <div style='text-align:center; margin-top: -20px; padding-top: 0px;'>
-        <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
-            🚀 METAR 智能监控终端
-        </h1>
-        <p style='margin: 5px 0; color: #00aaff; font-size: 16px; font-weight: bold;'>
-            实时气象 · 概率模型 · 信号系统
-        </p>
-        <p style='margin: 2px 0; font-size: 14px; color: #888; font-weight: bold;'>
-            更新时间：{now_local().strftime('%Y-%m-%d %H:%M:%S')}
-        </p>
-        <p style='margin: 2px 0; font-size: 14px; color: #666; font-weight: bold;'>
-            数据来源：METAR(ZSPD) ｜ 系统每30S自动刷新 ｜ Design by Kylin
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+# =========================================================
+# 2. 修复并优化后的标题 HTML 模块 + 右侧声音开关 (三列布局)
+# =========================================================
+# 使用 [2, 6, 2] 的比例划分列。中间列最宽放标题，两边对称保证标题绝对居中
+col_left, col_title, col_audio = st.columns([2, 6, 2])
+
+with col_title:
+    # 标题部分保持原来的紧凑样式不变
+    st.markdown(f"""
+        <div style='text-align:center; margin-top: -20px; padding-top: 0px;'>
+            <h1 style='margin: 0px; padding: 0px; color: #00aaff; font-size: 34px;'>
+                🚀 METAR 智能监控终端
+            </h1>
+            <p style='margin: 5px 0; color: #00aaff; font-size: 16px; font-weight: bold;'>
+                实时气象 · 概率模型 · 信号系统
+            </p>
+            <p style='margin: 2px 0; font-size: 14px; color: #888; font-weight: bold;'>
+                更新时间：{now_local().strftime('%Y-%m-%d %H:%M:%S')}
+            </p>
+            <p style='margin: 2px 0; font-size: 14px; color: #666; font-weight: bold;'>
+                数据来源：METAR(ZSPD) ｜ 系统每30S自动刷新 ｜ Design by Kylin
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
+
+with col_audio:
+    # 1. 初始化 Session State
+    if "audio_enabled" not in st.session_state:
+        st.session_state.audio_enabled = True
+    
+    # 2. 注入一个空的 div，利用 margin-top 将开关向下推一点，使其与左侧的主标题在视觉上垂直对齐
+    st.markdown("<div style='margin-top: -15px;'></div>", unsafe_allow_html=True)
+    
+    # 3. 渲染开关
+    audio_switch = st.toggle("🔊 声音提醒", value=st.session_state.audio_enabled)
+    st.session_state.audio_enabled = audio_switch
+    
+    # 4. 关闭时的红色警告 (缩小了字体和内边距，以适应较窄的右侧列)
+    if not st.session_state.audio_enabled:
+        st.markdown("""
+            <div style='color: #ff4d6d; font-weight: 900; font-size: 13px; 
+                        background: rgba(255,0,80,0.1); padding: 4px; 
+                        border-radius: 5px; border: 1px solid #ff4d6d; 
+                        text-align: center; margin-top: 0px;'>
+                🚨 警告：声音提醒已关闭！
+            </div>
+        """, unsafe_allow_html=True)
 
 # ======================
 # 🌌 科幻UI样式（优化为浅色）
@@ -524,7 +553,6 @@ def decode_metar(raw, obs_time):
         data["wx"] = ", ".join(wx_list)
         
     return data
-    
 # ======================
 # 模型
 # ======================
@@ -546,13 +574,13 @@ def peak_probability(data):
     return min(round(score), 100)
 
 # ======================
-# 启动 (逻辑优化增强版)
+# 启动 (彻底修复版)
 # ======================
-# --- 增加全局状态追踪所需的所有 SessionState 变量 ---
+# --- 在启动逻辑之前添加 ---
 if "hist_source_name" not in st.session_state:
     st.session_state.hist_source_name = "本地缓存" # 默认值
-if "audio_unlocked" not in st.session_state:
-    st.session_state.audio_unlocked = False
+
+# 🌟 新增全局状态追踪所需的所有 SessionState 变量 🌟
 if "last_metar_time" not in st.session_state:
     st.session_state.last_metar_time = None
 if "pending_alert" not in st.session_state:
@@ -619,27 +647,21 @@ except Exception as e:
     is_delayed = False
 
 # ======================
-# 🔊 声音系统（终极修复版）
+# 🔊 声音警报执行逻辑
 # ======================
-if st.button("🔊 启用声音提醒"):
-    st.session_state.audio_unlocked = True
-    # 更换为极其稳定、无防盗链的 Google 官方测试提示音
-    test_audio_url = "https://actions.google.com/sounds/v1/alarms/beep_short.ogg"
-    st.markdown(f'<audio autoplay><source src="{test_audio_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
-    st.success("✅ 声音提醒已解锁！您刚才应该已经听到了一声测试的“滴”声。")
-
 # 检查鸣响标记：通过 pending_alert 状态位触发，避免刷新被截断
-if st.session_state.audio_unlocked and st.session_state.pending_alert:
+if st.session_state.audio_enabled and st.session_state.pending_alert:
     # 加上时间戳防止浏览器缓存，确保每次新数据都响
-    alert_url = f"https://actions.google.com/sounds/v1/alarms/beep_short.ogg?t={datetime.now().timestamp()}"
+    alert_url = f"https://actions.google.com/sounds/v1/alarms/beep_short.ogg?t={datetime.now(timezone.utc).timestamp()}"
     st.markdown(f'<audio autoplay><source src="{alert_url}" type="audio/ogg"></audio>', unsafe_allow_html=True)
     
-    # 加上一个视觉弹窗，做双重保障
-    st.toast("🔔 抓取到新 METAR 数据，已触发声音警报！", icon="🔊", duration=10)
+    # 视觉弹窗双重保障
+    st.toast("🔔 抓取到最新 METAR 数据！", icon="🔊", duration=12)
+    st.toast("🔔 已触发声音警报!", icon="🔊", duration=8)
     
     # 鸣响后立即重置标记，防止无限循环鸣响
     st.session_state.pending_alert = False
-
+    
 # 数据来源
 delay_info = f"**{int(delay_min)}** 分钟" 
 space = "&nbsp;" * 80
@@ -885,7 +907,7 @@ with col2:
 
 with col3:
     source_label = st.session_state.get("hist_source_name", "本地缓存")
-    st.markdown(f"### 📋 历史数据 <span style='font-size:14px; color:#888; font-weight:normal;'>({source_label})</span>", unsafe_allow_html=True)
+    st.markdown(f"### 📋 历史数据 <span style='font-size:18px; color:#888; font-weight:normal;'>({source_label})</span>", unsafe_allow_html=True)
 #   st.markdown("### 📋 历史数据")
 
     if data:
