@@ -25,7 +25,9 @@ def now_local():
 # =========================================================
 # 3. 自动刷新与 CSS 注入 (极致紧凑布局)
 # =========================================================
-st_autorefresh(interval=30000, key="refresh")
+# AWC 官方 API 建议同一 endpoint 每线程最高约 1 次/分钟。
+# METAR 本身通常 30 分钟一报，60 秒刷新已经足够捕捉新报文，同时避免请求过密。
+st_autorefresh(interval=60000, key="refresh")
 # 标题自定义
 # 1. 注入全局 CSS，彻底消除顶部间隙
 st.markdown("""
@@ -69,7 +71,7 @@ with col_title:
                 更新时间：{now_local().strftime('%Y-%m-%d %H:%M:%S')}
             </p>
             <p style='margin: 2px 0; font-size: 14px; color: #666; font-weight: bold;'>
-                数据来源：METAR(ZSPD) ｜ 系统每30S自动刷新 ｜ Design by Kylin
+                数据来源：AWC API METAR(ZSPD) ｜ 系统每60S自动刷新 ｜ Design by Kylin
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -270,6 +272,59 @@ def save_cache(data):
     with open("cache.json", "w") as f:
         json.dump(data, f)
 
+def parse_awc_obs_time(obs):
+    """解析 AWC API 返回的 obsTime 字段，统一转成无时区 UTC datetime。"""
+    if obs is None:
+        raise ValueError("obsTime 为空")
+
+    # AWC JSON 目前常见返回为 Unix 秒时间戳；这里保留字符串兼容，防止官方字段格式变化。
+    if isinstance(obs, (int, float)):
+        return datetime.fromtimestamp(obs, timezone.utc).replace(tzinfo=None)
+
+    obs_text = str(obs).strip()
+    if obs_text.isdigit():
+        return datetime.fromtimestamp(int(obs_text), timezone.utc).replace(tzinfo=None)
+
+    for fmt in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(obs_text, fmt)
+        except ValueError:
+            pass
+
+    raise ValueError(f"无法识别 AWC obsTime 格式: {obs_text}")
+
+def extract_awc_record(m):
+    """把一条 AWC METAR JSON 记录转换成系统内部统一格式。"""
+    temp = m.get("temp")
+    if temp is None:
+        temp = m.get("temp_c")
+
+    raw = m.get("rawOb") or m.get("raw_text") or m.get("raw") or ""
+    obs = m.get("obsTime") or m.get("observation_time")
+    if temp is None or not obs:
+        raise ValueError("缺少 temp 或 obsTime 字段")
+
+    utc_dt = parse_awc_obs_time(obs)
+    local_dt = utc_dt + timedelta(hours=8)
+    return {
+        "metar_time": f"{utc_dt.strftime('%d%H%M')}Z",
+        "time": local_dt.strftime("%Y-%m-%d %H:%M"),
+        "temp": int(round(float(temp))),
+        "raw": raw
+    }
+
+def keep_today_records(data):
+    """只保留北京时间今天的记录，避免隔夜缓存污染今日最高温。"""
+    today = now_local().date()
+    kept = []
+    for row in data:
+        try:
+            if datetime.strptime(row["time"], "%Y-%m-%d %H:%M").date() == today:
+                kept.append(row)
+        except Exception:
+            continue
+    return kept
+
 # ======================
 # 历史数据（双源修复版：精准拉取本地凌晨数据）
 # ======================
@@ -423,48 +478,57 @@ def init_today_history():
 # 实时数据
 # ======================
 def get_today_data():
-    data = load_cache()
+    data = keep_today_records(load_cache())
     is_new = False
     source = "CACHE"
-# 尝试从 NOAA 获取实时数据
+    # 尝试从 AWC 官方 API 获取实时 METAR。
+    # 相比 tgftp.nws.noaa.gov 的单站文本文件，AWC API 返回结构化 JSON，
+    # 可以直接拿到 obsTime/temp/rawOb，减少文本文件同步或缓存异常带来的不确定性。
     try:
-        url = "https://tgftp.nws.noaa.gov/data/observations/metar/stations/ZSPD.TXT"
-        txt = requests.get(url, timeout=2).text
-        lines = txt.strip().split("\n")
-        if len(lines) < 2: return data, False, "CACHE"
-        
-        metar = lines[1]
+        url = "https://aviationweather.gov/api/data/metar"
+        params = {"ids": "ZSPD", "format": "json", "hours": 2}
+        headers = {"User-Agent": "ZSPD-METAR-Monitor/1.0"}
+        res = requests.get(url, params=params, headers=headers, timeout=5)
+        res.raise_for_status()
+        if res.status_code == 204:
+            print("⚠️ AWC 实时 API 返回 204：当前没有可用 METAR，继续使用缓存。")
+            return data, False, "CACHE"
 
-        # 1. 匹配 6 位时间戳 (前2位日，中2位时，后2位分)
-        t = re.search(r'(\d{2})(\d{2})(\d{2})Z', metar)
-        temp_match = re.search(r' (M?\d{2})/(M?\d{2}) ', metar)
+        metars = res.json()
+        if isinstance(metars, dict):
+            metars = [metars]
+        if not metars:
+            print("⚠️ AWC 实时 API 返回空数组，继续使用缓存。")
+            return data, False, "CACHE"
 
-        if t and temp_match:
-            source = "REALTIME"
-            # 提取报文中的原始时间字符串
-            day_s, hour_s, min_s = t.groups()
-            metar_time = f"{day_s}{hour_s}{min_s}Z"
-            
-            # 2. 核心修复：调用 utc_to_local 计算真实的观测时间（北京时间）
-            # 这样即便你是 18:06 抓到的报文，只要报文显示 1000Z，记录就会是 18:00
-            obs_dt = utc_to_local(day_s, hour_s, min_s)
-            formatted_obs_time = obs_dt.strftime("%Y-%m-%d %H:%M")
+        records = []
+        for item in metars:
+            try:
+                record = extract_awc_record(item)
+                if datetime.strptime(record["time"], "%Y-%m-%d %H:%M").date() == now_local().date():
+                    records.append(record)
+            except Exception as item_error:
+                print(f"⚠️ AWC 单条记录解析失败: {item_error} | 原始记录: {item}")
 
-            temp = int(temp_match.group(1).replace("M", "-"))
+        if not records:
+            print("⚠️ AWC 实时 API 有返回，但没有属于北京时间今天的有效记录。")
+            return data, False, "CACHE"
 
-            # 3. 检查是否为新报文
-            if len(data) == 0 or data[-1]["metar_time"] != metar_time:
-                is_new = True
-                data.append({
-                    "metar_time": metar_time,
-                    "time": formatted_obs_time,  # 使用计算出的精准观测时间
-                    "temp": temp,
-                    "raw": metar
-                })
-                save_cache(data)
+        latest = sorted(records, key=lambda x: x["time"])[-1]
+        source = "AWC_API"
+
+        # 检查是否为新报文。这里用 metar_time 去重，避免 30 秒刷新时重复写入同一条 METAR。
+        if len(data) == 0 or data[-1]["metar_time"] != latest["metar_time"]:
+            is_new = True
+            data.append(latest)
+            data = sorted(data, key=lambda x: x["time"])
+            save_cache(data)
+        else:
+            # 即使没有新报文，也顺手保存一次今日缓存，清掉跨日残留。
+            save_cache(data)
 
     except Exception as e:
-        print(f"⚠️ 实时抓取异常: {e}")
+        print(f"⚠️ AWC 实时抓取异常: {e}")
 
     return data, is_new, source
 # ======================
@@ -666,8 +730,8 @@ if st.session_state.audio_enabled and st.session_state.pending_alert:
 delay_info = f"**{int(delay_min)}** 分钟" 
 space = "&nbsp;" * 80
 
-if source == "REALTIME":
-    st.success(f" {space} 🟢 数据来源：实时METAR {space} ⌛⌛截至当前时间，距离上一次获取实时数据已经延迟：{delay_info}")
+if source in ("REALTIME", "AWC_API"):
+    st.success(f" {space} 🟢 数据来源：AWC API 实时 METAR {space} ⌛⌛截至当前时间，距离上一次获取实时数据已经延迟：{delay_info}")
 else:
     st.warning(f"🟡 数据来源：缓存 (🚨🚨注意，缓存数据无意义,联系作者排查数据原因: {delay_info})")
 
